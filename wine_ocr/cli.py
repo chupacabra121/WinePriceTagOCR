@@ -378,6 +378,141 @@ def plan(
         console.print(f"[green]Wrote {len(regions)} tile(s) to {out}[/green]")
 
 
+@app.command()
+def review(
+    extracted: Path = typer.Argument(
+        Path("out/wines.csv"), help="A wines.csv produced by `extract`."
+    ),
+    photos: Path = typer.Option(
+        Path("data/photos"), "--photos", "-p",
+        help="Folder the `photo` column is relative to.",
+    ),
+    out: Path = typer.Option(Path("out/review.html"), "--out", "-o"),
+    all_rows: bool = typer.Option(
+        False, "--all", help="Include every row, not just flagged ones."
+    ),
+    limit: Optional[int] = typer.Option(None, "--limit"),
+) -> None:
+    """Build a self-contained HTML sheet pairing each row with its crop.
+
+    Makes no API calls. Open the file in a browser to check rows against what
+    the model actually saw.
+    """
+    import csv as _csv
+
+    from .review import build_report
+
+    if not extracted.exists():
+        console.print(f"[red]Not found:[/red] {extracted}")
+        raise typer.Exit(1)
+
+    with extracted.open("r", encoding="utf-8-sig") as fh:
+        rows = [r for r in _csv.DictReader(fh) if not (r.get("duplicate_of") or "").strip()]
+
+    if not all_rows:
+        rows = [r for r in rows if r.get("needs_review") == "yes"]
+        if not rows:
+            console.print(
+                "[green]Nothing flagged for review.[/green] "
+                "Use --all to inspect every row anyway."
+            )
+            raise typer.Exit(0)
+    if limit:
+        rows = rows[:limit]
+
+    document, rendered, crops = build_report(rows, photos)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(document, encoding="utf-8")
+
+    size_kb = out.stat().st_size / 1024
+    console.print(
+        f"[green]Wrote[/green] {out} — {rendered} row(s), {crops} crop(s), "
+        f"{size_kb:,.0f} KB"
+    )
+    if rendered and not crops:
+        console.print(
+            "[yellow]No crops embedded.[/yellow] Either the photos are not under "
+            f"{photos} (pass --photos), or the model returned no bounding boxes."
+        )
+
+
+@app.command()
+def verify(
+    extracted: Path = typer.Argument(
+        Path("out/wines.csv"), help="A wines.csv produced by `extract`."
+    ),
+    truth: Path = typer.Option(
+        Path("data/samples/annabella/ground_truth.csv"), "--truth", "-t",
+        help="Hand-read ground-truth CSV.",
+    ),
+    show: int = typer.Option(30, "--show", help="Rows of detail to print."),
+) -> None:
+    """Score an extraction against hand-read ground truth. Makes no API calls.
+
+    Ground truth covers a subset of the photos, so this reports recall over
+    that subset; rows outside it are listed but never counted as errors.
+    """
+    from .verify import load_extracted, load_truth, verify as run_verify
+
+    for path in (extracted, truth):
+        if not path.exists():
+            console.print(f"[red]Not found:[/red] {path}")
+            raise typer.Exit(1)
+
+    expected = load_truth(truth)
+    rows = load_extracted(extracted)
+    if not expected:
+        console.print(f"[red]No usable rows in {truth}[/red]")
+        raise typer.Exit(1)
+
+    report = run_verify(expected, rows)
+
+    detail = Table(title=f"{truth.name} vs {extracted.name}")
+    detail.add_column("#", justify="right")
+    detail.add_column("Expected price", justify="right")
+    detail.add_column("Expected name")
+    detail.add_column("Found")
+    detail.add_column("Extracted name")
+    for outcome in report.outcomes[:show]:
+        exp = outcome.expected
+        if not outcome.found:
+            found, name = "[red]missing[/red]", "—"
+        else:
+            marks = {True: "[green]yes[/green]", False: "[red]no[/red]", None: "[dim]n/a[/dim]"}
+            found = f"yes · name {marks[outcome.name_ok]}"
+            name = (outcome.matched.get("wine_name") or "")[:44]
+        detail.add_row(
+            f"{exp.rail}.{exp.position}", f"{exp.price:.2f}",
+            exp.name_contains or "[dim]—[/dim]", found, name,
+        )
+    console.print(detail)
+
+    total = len(report.outcomes)
+    summary = Table(title="Score", show_header=False, title_style="bold")
+    summary.add_row("Prices found", f"{report.found}/{total} ({_pct(report.found, total)})")
+    if report.name_checked:
+        summary.add_row(
+            "Names correct",
+            f"{report.name_correct}/{report.name_checked} "
+            f"({_pct(report.name_correct, report.name_checked)}) of tags found",
+        )
+    volumes = sum(1 for o in report.outcomes if o.expected.volume_ml is not None)
+    if volumes:
+        summary.add_row(
+            "Volumes correct",
+            f"{report.volume_correct}/{volumes} ({_pct(report.volume_correct, volumes)})",
+        )
+    summary.add_row("Rows outside ground truth", f"{len(report.extra)} (not scored)")
+    summary.add_row("Total rows in table", str(report.total_rows))
+    console.print(summary)
+
+    if report.found < total:
+        console.print(
+            "\n[yellow]Missing prices usually mean the tag was never read.[/yellow] "
+            "Check --tiling (whole loses small tag text), then the 'Errors' sheet."
+        )
+
+
 def main() -> None:  # pragma: no cover
     try:
         app()

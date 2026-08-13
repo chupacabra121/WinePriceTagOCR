@@ -64,6 +64,10 @@ class Region:
     band_index: int
     tile_index: int
     tile_count: int
+    # True/False when the tag rail's position is known (band tiling), None when
+    # it is not (grid tiling). A tile known to exclude the rail must not be
+    # allowed to invent prices, so this is surfaced in the prompt.
+    contains_tag_rail: Optional[bool] = None
 
     @property
     def width(self) -> int:
@@ -259,44 +263,77 @@ def band_regions(
 
         px0, py0 = int(x0 * photo_w), int(y0 * photo_h)
         px1, py1 = int(x1 * photo_w), int(y1 * photo_h)
+        # Absolute pixel span of this band's tag rail, so tiles can report
+        # whether they actually contain it.
+        rail = (int(band.tags_y0 * photo_h), int(band.tags_y1 * photo_h))
         regions.extend(
-            _tile_horizontally(
-                px0, py0, px1, py1, i, band.label, max_edge, overlap_frac
+            _tile_region(
+                px0, py0, px1, py1, i, band.label, max_edge, overlap_frac, rail
             )
         )
     return regions
 
 
-def _tile_horizontally(
+def _axis_offsets(length: int, budget: int, overlap_frac: float) -> list[tuple[int, int]]:
+    """Split ``length`` into overlapping spans of at most ``budget``.
+
+    ``n`` spans of size ``s`` with fractional overlap ``v`` cover
+    ``n*s - (n-1)*v*s``, so solve for the smallest ``n`` whose span fits.
+    """
+    if length <= budget:
+        return [(0, length)]
+    n = 2
+    while True:
+        span = length / (n - (n - 1) * overlap_frac)
+        if span <= budget or n > 24:
+            break
+        n += 1
+    step = (length - span) / (n - 1)
+    return [(int(i * step), int(min(length, i * step + span))) for i in range(n)]
+
+
+def _tile_region(
     x0: int, y0: int, x1: int, y1: int, band_index: int, label: str,
     max_edge: int, overlap_frac: float,
+    tag_rail: Optional[tuple[int, int]] = None,
 ) -> list[Region]:
+    """Split a crop on both axes so no tile's long edge exceeds ``max_edge``.
+
+    Horizontal splitting alone is not enough: a band taller than the limit —
+    a close-up, or a single band covering most of the frame — would still be
+    downscaled, which is the exact failure tiling exists to prevent.
+
+    Vertical splits are a last resort because they can separate bottles from the
+    tags that price them. When that happens the bottom row keeps the tag rail
+    (rails sit at the foot of a band), and the upper tiles are marked as
+    tag-free so they are told not to guess at prices.
+    """
     width, height = x1 - x0, y1 - y0
     if width <= 0 or height <= 0:
         return []
 
-    # A tile is only downscaled if its *long* edge exceeds the limit. Height is
-    # fixed by the band, so solve for how many horizontal splits keep width under.
-    budget = max_edge if height <= max_edge else int(max_edge * width / height)
-    if width <= budget:
-        return [Region(label, x0, y0, x1, y1, band_index, 0, 1)]
+    cols = _axis_offsets(width, max_edge, overlap_frac)
+    rows = _axis_offsets(height, max_edge, overlap_frac)
+    total = len(cols) * len(rows)
 
-    # n overlapping tiles of width w cover: n*w - (n-1)*overlap*w >= width
-    n = 2
-    while True:
-        tile_w = width / (n - (n - 1) * overlap_frac)
-        if tile_w <= budget or n > 24:
-            break
-        n += 1
-
-    step = (width - tile_w) / (n - 1)
-    out = []
-    for t in range(n):
-        tx0 = int(x0 + t * step)
-        tx1 = int(min(x1, tx0 + tile_w))
-        out.append(
-            Region(f"{label} (tile {t + 1}/{n})", tx0, y0, tx1, y1, band_index, t, n)
-        )
+    out: list[Region] = []
+    index = 0
+    for ry0, ry1 in rows:
+        ay0, ay1 = y0 + ry0, y0 + ry1
+        if tag_rail is None:
+            has_rail: Optional[bool] = None
+        else:
+            # Any overlap with the rail counts; a sliver of tag is still a tag.
+            has_rail = ay0 < tag_rail[1] and ay1 > tag_rail[0]
+        for cx0, cx1 in cols:
+            name = label if total == 1 else f"{label} (tile {index + 1}/{total})"
+            out.append(
+                Region(
+                    name, x0 + cx0, ay0, x0 + cx1, ay1,
+                    band_index, index, total, has_rail,
+                )
+            )
+            index += 1
     return out
 
 
@@ -318,7 +355,7 @@ def grid_regions(
         y0 = max(0, int(r * row_h) - overlap_px)
         y1 = min(photo_h, int((r + 1) * row_h) + overlap_px)
         regions.extend(
-            _tile_horizontally(
+            _tile_region(
                 0, y0, photo_w, y1, r, f"grid row {r + 1}/{rows}", max_edge, overlap_frac
             )
         )

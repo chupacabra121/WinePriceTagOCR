@@ -232,3 +232,59 @@ def test_writers_produce_readable_files(tmp_path):
         "Wines", "Needs review", "Duplicates", "Unmatched tags", "Errors"
     ]
     assert wb["Wines"].max_row == 3  # header + 2 primary rows
+
+
+# --------------------------------------------------------------------------
+# Regressions
+# --------------------------------------------------------------------------
+
+
+def test_tall_band_is_split_vertically_not_downscaled():
+    """A band taller than the limit cannot be fixed by horizontal splits alone."""
+    tall = _band(bottles_y0=0.10, bottles_y1=0.68, tags_y0=0.70, tags_y1=0.76,
+                 x0=0.05, x1=0.95)
+    regions = band_regions(PHOTO_W, PHOTO_H, [tall], MAX_EDGE_HIRES)
+    assert len(regions) > 2, "expected a 2-D split"
+    for r in regions:
+        assert max(r.width, r.height) <= MAX_EDGE_HIRES, r
+
+
+def test_vertical_split_marks_which_tiles_hold_the_tag_rail():
+    tall = _band(bottles_y0=0.10, bottles_y1=0.68, tags_y0=0.70, tags_y1=0.76,
+                 x0=0.05, x1=0.95)
+    regions = band_regions(PHOTO_W, PHOTO_H, [tall], MAX_EDGE_HIRES)
+    flags = {r.contains_tag_rail for r in regions}
+    assert flags == {True, False}, "some tiles hold the rail, some do not"
+    # The rail sits at the foot of a band, so only the lowest tiles carry it.
+    rail_top = min(r.y0 for r in regions if r.contains_tag_rail)
+    assert all(r.y0 <= rail_top for r in regions if not r.contains_tag_rail)
+
+
+def test_short_band_keeps_the_rail_in_every_tile():
+    regions = band_regions(PHOTO_W, PHOTO_H, [_band(x0=0.0, x1=1.0)], MAX_EDGE_HIRES)
+    assert len(regions) > 1
+    assert all(r.contains_tag_rail for r in regions)
+
+
+def test_grid_tiling_leaves_rail_membership_unknown():
+    # Grid mode has no layout information, so it must not assert either way.
+    assert all(r.contains_tag_rail is None for r in grid_regions(PHOTO_W, PHOTO_H))
+
+
+def test_tag_free_tiles_are_told_not_to_price_bottles():
+    from wine_ocr.prompts import extract_user_prompt
+
+    without = extract_user_prompt("p.jpg", "t", None, "RON", None, True, False)
+    assert "leave price null" in without
+
+    for flag in (True, None):
+        text = extract_user_prompt("p.jpg", "t", None, "RON", None, True, flag)
+        assert "leave price null" not in text
+
+
+def test_many_sightings_get_distinct_duplicate_ids():
+    """Two overlapping photos x two overlapping tiles = four sightings."""
+    rows = deduplicate([_row() for _ in range(4)])
+    ids = [r["row_id"] for r in rows]
+    assert len(set(ids)) == len(ids) == 4
+    assert sum(1 for r in rows if not r["duplicate_of"]) == 1

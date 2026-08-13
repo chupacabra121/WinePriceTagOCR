@@ -1,0 +1,25 @@
+# Hand-read ground truth for the top tag rail of IMG_5755 (Annabella, Romania).
+#
+# Transcribed by eye from the tag rail at native resolution, left to right.
+# Prices are read with high confidence — the digits are large and unambiguous.
+# name_contains holds one distinctive token per tag that a correct extraction
+# must reproduce somewhere in wine_name or raw_tag_text; it is left blank where
+# the abbreviated tag text was not legible enough to assert, and blanks are
+# skipped rather than counted as failures.
+#
+# Scope: one rail of one photo. `wine-ocr verify` therefore scores recall
+# against these rows only and reports anything extra without penalising it.
+#
+# Run:  wine-ocr verify out/wines.csv --truth data/samples/annabella/ground_truth.csv
+photo,rail,position,price,currency,volume_ml,name_contains,notes
+IMG_5755.HEIC,1,1,58.99,RON,750,TERRA ROMANA,bottle label reads SERVE Terra Romana
+IMG_5755.HEIC,1,2,54.59,RON,750,EUFORIA,comma decimal on the tag
+IMG_5755.HEIC,1,3,54.70,RON,750,ROZALIA,Vinarte Avenue Rozalia de Samburesti
+IMG_5755.HEIC,1,4,50.89,RON,750,FETEASCA NEAGRA,tag begins with an article code
+IMG_5755.HEIC,1,5,55.99,RON,750,ACADEMICIAN,Muscat Ottonel Academician
+IMG_5755.HEIC,1,6,25.49,RON,750,CABERNET SAUVIGNON,Astrum
+IMG_5755.HEIC,1,7,37.99,RON,750,SAMBURESTI,Domeniile Samburesti Feteasca Neagra
+IMG_5755.HEIC,1,8,27.99,RON,750,MERLOT,Castel Huniade Merlot + Pinot Noir
+IMG_5755.HEIC,1,9,27.99,RON,750,MERLOT,Castel Huniade vin rosu Merlot
+IMG_5755.HEIC,1,10,34.59,RON,750,KOGALNICEANU,Domeniile Kogalniceanu feteasca alba
+IMG_5755.HEIC,1,11,60.99,RON,750,,partially cut off at the right frame edge

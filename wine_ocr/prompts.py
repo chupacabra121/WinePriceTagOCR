@@ -4,7 +4,7 @@ Bump PROMPT_VERSION whenever a prompt changes: it is part of the response-cache
 key, so stale results are invalidated automatically.
 """
 
-PROMPT_VERSION = "2026-08-13.1"
+PROMPT_VERSION = "2026-08-13.2"
 
 # --------------------------------------------------------------------------
 # Pass 1 — locate the shelves
@@ -121,6 +121,7 @@ def extract_user_prompt(
     currency_hint: str | None,
     taken_at: str | None,
     tiled: bool,
+    contains_tag_rail: bool | None = None,
 ) -> str:
     lines = [
         f"Read every wine in this image region: {region_label}.",
@@ -136,9 +137,16 @@ def extract_user_prompt(
         lines.append(f"Captured: {taken_at}")
     if tiled:
         lines.append(
-            "This is one tile of a wider shelf and overlaps its neighbours, so a "
-            "bottle or tag may be cut off at the left or right edge. Include a "
-            "partially visible item only if its name and price are both readable; "
-            "otherwise leave it for the adjacent tile."
+            "This is one tile of a larger shelf and overlaps its neighbours, so a "
+            "bottle or tag may be cut off at an edge. Include a partially visible "
+            "item only if its name and price are both readable; otherwise leave it "
+            "for the adjacent tile."
+        )
+    if contains_tag_rail is False:
+        lines.append(
+            "The price-tag rail for these bottles falls outside this crop, so no "
+            "price here belongs to them. Record what you can read from the labels "
+            "and leave price null — a tag visible at an edge prices bottles on a "
+            "different shelf, not these."
         )
     return "\n".join(lines)

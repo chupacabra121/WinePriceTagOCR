@@ -211,8 +211,11 @@ def deduplicate(rows: list[dict]) -> list[dict]:
             )
             primary["needs_review"] = "yes"
 
-        for dup in group[1:]:
-            dup["row_id"] = f"{primary['row_id']}d"
+        # Suffix every duplicate distinctly: one wine is routinely seen 3-4
+        # times (two overlapping photos x two overlapping tiles), and a shared
+        # id would collide.
+        for n, dup in enumerate(group[1:], start=1):
+            dup["row_id"] = f"{primary['row_id']}d{n}"
             dup["duplicate_of"] = primary["row_id"]
             kept.append(dup)
 

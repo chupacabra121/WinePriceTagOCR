@@ -238,7 +238,7 @@ def extract_region(
 ) -> RegionResult:
     key = cache.key(
         "extract", PROMPT_VERSION, settings.model, settings.effort, settings.max_edge,
-        sha, region.x0, region.y0, region.x1, region.y1,
+        sha, region.x0, region.y0, region.x1, region.y1, region.contains_tag_rail,
     )
     if cached := cache.get(key):
         try:
@@ -255,7 +255,7 @@ def extract_region(
             EXTRACT_SYSTEM,
             extract_user_prompt(
                 photo_path.name, region.label, store_hint, currency_hint,
-                taken_at, region.tile_count > 1,
+                taken_at, region.tile_count > 1, region.contains_tag_rail,
             ),
             b64,
             BandExtraction,
@@ -353,7 +353,7 @@ def build_batch_item(
 ) -> BatchItem:
     key = cache.key(
         "extract", PROMPT_VERSION, settings.model, settings.effort, settings.max_edge,
-        sha, region.x0, region.y0, region.x1, region.y1,
+        sha, region.x0, region.y0, region.x1, region.y1, region.contains_tag_rail,
     )
     crop = crop_region(img, region)
     b64, _, _ = encode_jpeg(crop, settings.max_edge, settings.jpeg_quality)
@@ -372,6 +372,7 @@ def build_batch_item(
                         "text": extract_user_prompt(
                             photo_path.name, region.label, store_hint,
                             currency_hint, taken_at, region.tile_count > 1,
+                            region.contains_tag_rail,
                         ),
                     },
                 ],

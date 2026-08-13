@@ -38,10 +38,17 @@ pipeline therefore:
 1. **Locates the shelves** — one cheap call on the whole photo at 1568px returns
    a band per shelf (bottle row + the tag rail beneath it), plus the store name
    and currency, and marks shelves that hold no wine so they are never read again.
-2. **Reads each band at native resolution** — every band is cropped and, if still
-   wider than 2576px, split into horizontally overlapping tiles so that *nothing
-   sent to the model is ever downscaled*. A band keeps bottles and their tags in
-   one frame, which is what makes the pairing checkable.
+2. **Reads each band at native resolution** — every band is cropped and, if it
+   still exceeds 2576px on either axis, split into overlapping tiles so that
+   *nothing sent to the model is ever downscaled*. A band keeps bottles and
+   their tags in one frame, which is what makes the pairing checkable.
+
+Splitting is horizontal wherever possible, because a vertical cut can separate
+bottles from the tags that price them. When a band is too tall to avoid one
+(a close-up, or a single band covering most of the frame) the bottom row keeps
+the tag rail, and the tiles above it are told that no price in view belongs to
+their bottles — otherwise a tag clipped at the edge invites a confident, wrong
+pairing.
 
 `--tiling whole` skips all of this and makes one call per photo. It is ~6× cheaper
 and fine when the tags are large in frame (a single bottle, or a close-up of a
@@ -105,7 +112,15 @@ wine-ocr extract data/photos --batch
 
 # Add a new shopping trip to an existing table
 wine-ocr extract data/photos/new-trip --append
+
+# Check flagged rows against the crops they came from (opens in a browser)
+wine-ocr review out/wines.csv --photos data/photos
+
+# Score an extraction against hand-read ground truth
+wine-ocr verify out/wines.csv
 ```
+
+`estimate`, `plan`, `review` and `verify` make no API calls at all.
 
 Useful flags: `--effort low|medium|high|xhigh|max` (default `high`),
 `--model`, `--workers`, `--limit N`, `--no-cache`.
@@ -146,6 +161,38 @@ Anything that fails, or that the model marked low-confidence, lands on the
 to `unmatched_tags.csv`, and duplicate sightings are linked via `duplicate_of`
 rather than deleted.
 
+## Checking the output
+
+Two commands close the loop, and neither costs anything to run.
+
+**`wine-ocr review`** builds a self-contained HTML sheet putting each row's crop
+next to the values read from it. A wrong pairing is obvious the moment you see a
+Terra Romana bottle labelled as a Cotnari — which is not obvious at all in a
+spreadsheet cell. Flagged rows only by default; `--all` for everything.
+
+**`wine-ocr verify`** scores an extraction against
+`data/samples/annabella/ground_truth.csv` — the top tag rail of `IMG_5755`,
+eleven tags transcribed by hand at native resolution. It reports:
+
+```
+Prices found              ?/11
+Names correct             ?/10 of tags found
+Volumes correct           ?/11
+Rows outside ground truth n  (not scored)
+```
+
+**These numbers are unmeasured so far** — the scorer is tested against synthetic
+extractions, but nothing has been scored against real model output yet.
+
+Ground truth covers one rail, so scoring is recall over that rail; rows from
+other shelves are listed but never counted against you. Matching is on price —
+the field that can be transcribed by eye with near-certainty — and a matched row
+is then checked for a distinctive name token, which is what separates a good
+read from one that got the digits right and the product wrong.
+
+This is the number to watch on the first live run, and again after any prompt
+change.
+
 ## Cost
 
 Measured on the four sample photos (upper bound; ignores caching):
@@ -176,7 +223,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-59 tests, no API key required. The end-to-end test drives the whole pipeline
+97 tests, no API key required. The end-to-end test drives the whole pipeline
 against a stubbed client using a real sample photo, so the only thing untested
 without a key is the model's answer itself. `test_tiles_are_never_downscaled`
 and `test_images_reach_the_model_at_native_resolution` are regression guards on
@@ -193,6 +240,8 @@ wine_ocr/
 ├── output.py      rows, dedup, CSV/Excel/JSONL writers
 ├── stores.py      store attribution
 ├── schema.py      Pydantic → structured-outputs JSON Schema
+├── review.py      the HTML review sheet
+├── verify.py      ground-truth scoring
 └── cache.py       on-disk response cache
 ```
 
