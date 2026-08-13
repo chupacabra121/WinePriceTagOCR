@@ -1,0 +1,33 @@
+# Secrets
+.env
+
+# Photo library (bulk input) — samples under data/samples/ are tracked
+data/photos/*
+!data/photos/.gitkeep
+
+# Outputs and caches
+out/*
+!out/.gitkeep
+.cache/
+*.xlsx
+!data/samples/**/*.xlsx
+
+# Local store config (may contain real addresses)
+config/stores.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# OS
+.DS_Store
+Thumbs.db

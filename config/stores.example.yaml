@@ -1,0 +1,28 @@
+# Maps folder names (and other aliases) to a canonical store name.
+# Copy to config/stores.yaml and edit; that file is gitignored.
+#
+# Matching ignores case, spaces, hyphens and underscores, and is tried against
+# every folder in a photo's path.
+stores:
+  Annabella:
+    - annabella
+    - anabela
+    - annabella-rm-valcea
+  Kaufland:
+    - kaufland
+    - kfl
+  Mega Image:
+    - mega
+    - mega-image
+    - megaimage
+  Carrefour:
+    - carrefour
+    - crf
+  Lidl:
+    - lidl
+  Auchan:
+    - auchan
+  Profi:
+    - profi
+  Penny:
+    - penny
