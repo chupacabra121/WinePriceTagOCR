@@ -158,3 +158,77 @@ def test_verify_needs_no_key(tmp_path, monkeypatch):
 
     output = _invoke("verify", str(extracted), "--truth", str(truth)).output
     assert "11/11" in output
+
+
+# --------------------------------------------------------------------------
+# init
+# --------------------------------------------------------------------------
+
+
+def test_init_creates_folders_config_and_env(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "stores.example.yaml").write_text(
+        "stores:\n  Mega Image:\n    - mega-image\n", encoding="utf-8"
+    )
+    (tmp_path / ".env.example").write_text("ANTHROPIC_API_KEY=sk-ant-...\n", encoding="utf-8")
+
+    _invoke("init", "Annabella, Mega Image")
+
+    assert (tmp_path / "data/photos/annabella").is_dir()
+    assert (tmp_path / "data/photos/mega-image").is_dir()  # slugified
+    assert (tmp_path / "data/photos/.gitkeep").exists()    # git tracks the empty dir
+    assert (tmp_path / "config/stores.yaml").exists()
+    assert (tmp_path / ".env").exists()
+    assert (tmp_path / "out").is_dir()
+
+
+def test_init_slugs_resolve_back_to_store_names(tmp_path, monkeypatch):
+    """The folder init creates must be the one store attribution recognises."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "stores.example.yaml").write_text(
+        "stores:\n  Mega Image:\n    - mega-image\n", encoding="utf-8"
+    )
+    _invoke("init", "Mega Image, Some New Shop")
+
+    from wine_ocr.stores import load_store_map, resolve_store
+
+    store_map = load_store_map(tmp_path / "config/stores.yaml")
+    root = tmp_path / "data/photos"
+
+    mapped = resolve_store(root / "mega-image" / "a.HEIC", root, None, store_map, None)
+    assert (mapped.store, mapped.source) == ("Mega Image", "folder-map")
+
+    # A store with no alias still gets a sensible name from its folder.
+    unmapped = resolve_store(root / "some-new-shop" / "a.HEIC", root, None, store_map, None)
+    assert (unmapped.store, unmapped.source) == ("Some New Shop", "folder")
+
+
+def test_init_is_idempotent_and_preserves_config(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "stores.example.yaml").write_text("stores: {}\n", encoding="utf-8")
+
+    _invoke("init", "Annabella")
+    (tmp_path / "config/stores.yaml").write_text("stores:\n  Mine: [mine]\n", encoding="utf-8")
+
+    # Re-running must not clobber edits the user has made.
+    _invoke("init", "Annabella")
+    assert "Mine" in (tmp_path / "config/stores.yaml").read_text()
+
+    _invoke("init", "Annabella", "--force")
+    assert "Mine" not in (tmp_path / "config/stores.yaml").read_text()
+
+
+def test_init_without_store_names_still_scaffolds(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _invoke("init")
+    assert (tmp_path / "data/photos").is_dir()
+    assert (tmp_path / "out").is_dir()
+
+
+def test_init_needs_no_key(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    _invoke("init", "Annabella")

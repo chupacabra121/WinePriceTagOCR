@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -376,6 +377,62 @@ def plan(
         for i, region in enumerate(regions):
             crop_region(img, region).save(out / f"{path.stem}_tile{i:02d}.jpg", quality=88)
         console.print(f"[green]Wrote {len(regions)} tile(s) to {out}[/green]")
+
+
+@app.command()
+def init(
+    stores: Optional[str] = typer.Argument(
+        None, help='Comma-separated store names, e.g. "Annabella,Kaufland,Lidl".'
+    ),
+    photos: Path = typer.Option(Path("data/photos"), "--photos", "-p"),
+    force: bool = typer.Option(False, "--force", help="Overwrite config/stores.yaml."),
+) -> None:
+    """Create the local folder structure and config files. No API calls.
+
+    Photos stay on your machine — they are gitignored deliberately. Run this
+    once after cloning, then drop each shop's photos into its own folder.
+    """
+    created: list[str] = []
+    existed: list[str] = []
+
+    names = [s.strip() for s in (stores or "").split(",") if s.strip()]
+    photos.mkdir(parents=True, exist_ok=True)
+    (photos / ".gitkeep").touch()
+
+    for name in names:
+        # Folder names feed store attribution, so keep them tidy and lowercase.
+        slug = re.sub(r"[^\w\-]+", "-", name.strip().lower()).strip("-")
+        folder = photos / slug
+        (existed if folder.exists() else created).append(str(folder))
+        folder.mkdir(parents=True, exist_ok=True)
+
+    for target, template in (
+        (Path("config/stores.yaml"), Path("config/stores.example.yaml")),
+        (Path(".env"), Path(".env.example")),
+    ):
+        if target.exists() and not force:
+            existed.append(str(target))
+            continue
+        if template.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+            created.append(str(target))
+
+    Path("out").mkdir(exist_ok=True)
+
+    if created:
+        console.print("[green]Created[/green]\n  " + "\n  ".join(created))
+    if existed:
+        console.print("[dim]Already there\n  " + "\n  ".join(existed) + "[/dim]")
+
+    console.print(
+        "\n[bold]Next[/bold]\n"
+        "  1. Put your API key in [cyan].env[/cyan]\n"
+        f"  2. Copy each shop's photos into [cyan]{photos}/<store>/[/cyan]\n"
+        "  3. [cyan]wine-ocr estimate data/photos[/cyan]   — see the cost first\n"
+        "  4. [cyan]wine-ocr extract data/photos[/cyan]\n\n"
+        "[dim]Photos and .env are gitignored: they stay on this machine.[/dim]"
+    )
 
 
 @app.command()

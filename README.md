@@ -54,14 +54,63 @@ pairing.
 and fine when the tags are large in frame (a single bottle, or a close-up of a
 rail); on a wide shelf shot it will get prices without reliable names.
 
-## Install
+## Quickstart — run it on your own machine
+
+Photos stay local. Only code lives on GitHub.
 
 ```bash
+git clone https://github.com/chupacabra121/WinePriceTagOCR.git
+cd WinePriceTagOCR
 pip install -e .
-cp .env.example .env      # add your ANTHROPIC_API_KEY
+
+wine-ocr init "Annabella, Kaufland, Mega Image"   # folders + config + .env
+# put your key in .env, then copy each shop's photos into its folder
+
+wine-ocr estimate data/photos                     # what it will cost
+wine-ocr extract data/photos                      # do it
 ```
 
-HEIC is supported out of the box, so iPhone photos need no conversion.
+HEIC works as-is, so iPhone photos need no conversion.
+
+### Why photos do not belong in the repo
+
+| | |
+|---|---|
+| A phone photo | ~3.5 MB |
+| 500 of them | ~1.7 GB |
+| GitHub's hard per-file limit | 100 MB |
+| GitHub's soft repo limit | ~5 GB |
+
+Beyond size, git stores a full copy of every version forever, so re-shooting a
+shelf grows the repo permanently even if you delete the old file. Git is built
+for text it can diff; a JPEG is an opaque blob it can only accumulate.
+
+`.gitignore` therefore excludes `data/photos/`, `out/` and `.env`. The four
+sample photos under `data/samples/` are tracked deliberately, as test fixtures.
+
+If you do want your photos backed up, use iCloud, Drive, or an external disk —
+not version control. If you want them off your machine and into a run, upload
+them to a Claude conversation instead.
+
+### Putting a folder structure into git (when you do want to)
+
+The gotcha that trips everyone: **git cannot track an empty directory.** It
+tracks files, and infers folders from their paths, so an empty `data/photos/`
+simply will not commit. The fix is a placeholder file — this repo ships
+`data/photos/.gitkeep` and `out/.gitkeep` for exactly that reason, and
+`wine-ocr init` creates them for any folder it makes.
+
+To add a folder of files:
+
+```bash
+git add data/photos/annabella   # or: git add -A
+git commit -m "Add photos"
+git push
+```
+
+Or drag the folder onto the GitHub web UI, which preserves relative paths but
+caps out at 100 files and 25 MB per file. GitHub Desktop is the friendliest
+option if you would rather not use the terminal.
 
 ## Organising photos
 
@@ -73,6 +122,11 @@ data/photos/
 ├── kaufland/…
 └── mega-image/…
 ```
+
+`wine-ocr init "Annabella, Kaufland"` creates these, slugifying names to match
+the aliases in `config/stores.yaml` (`Mega Image` → `mega-image`). A folder with
+no alias still works — it just gets prettified back (`some-new-shop` → `Some New
+Shop`).
 
 Store attribution is resolved in this order, and the losing candidates are kept
 in the row rather than discarded:
@@ -95,6 +149,9 @@ names (`anabela`, `annabella-rm-valcea`) onto one canonical store.
 ## Usage
 
 ```bash
+# Create folders, config and .env
+wine-ocr init "Annabella, Kaufland"
+
 # See what a run would cost before spending anything
 wine-ocr estimate data/photos
 
@@ -120,7 +177,7 @@ wine-ocr review out/wines.csv --photos data/photos
 wine-ocr verify out/wines.csv
 ```
 
-`estimate`, `plan`, `review` and `verify` make no API calls at all.
+`init`, `estimate`, `plan`, `review` and `verify` make no API calls at all.
 
 Useful flags: `--effort low|medium|high|xhigh|max` (default `high`),
 `--model`, `--workers`, `--limit N`, `--no-cache`.
@@ -223,7 +280,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-97 tests, no API key required. The end-to-end test drives the whole pipeline
+102 tests, no API key required. The end-to-end test drives the whole pipeline
 against a stubbed client using a real sample photo, so the only thing untested
 without a key is the model's answer itself. `test_tiles_are_never_downscaled`
 and `test_images_reach_the_model_at_native_resolution` are regression guards on
