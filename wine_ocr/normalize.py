@@ -101,7 +101,12 @@ def check_price(price: Optional[float], price_text: Optional[str]) -> str:
         return "unverified"
     if abs(reparsed - price) < 0.005:
         return "ok"
-    # A factor-of-100 gap is the classic decimal-separator misread.
+    # Electronic labels print no separator at all — "88" large, "19" small — so
+    # a verbatim price_text of "8819" against a price of 88.19 is the format
+    # working as designed, not a misread.
+    if not re.search(r"[.,]", price_text or "") and abs(reparsed - price * 100) < 0.5:
+        return "ok_no_separator"
+    # A factor-of-100 gap is otherwise the classic decimal-separator misread.
     if abs(reparsed - price * 100) < 0.5 or abs(reparsed * 100 - price) < 0.5:
         return "mismatch_x100"
     return "mismatch"
@@ -170,6 +175,18 @@ _VOLUME_PATTERNS = [
 ]
 
 
+# "1 L = 53,32 Lei" and "(1 litru = 24.52)" state a reference litre for the unit
+# price, not the size of the bottle. Lidl prints one on every tag, so reading
+# volumes out of raw tag text without removing these makes every wine a litre.
+_UNIT_PRICE_CLAUSE = re.compile(
+    r"\b1\s*(?:l|litru|liter|litre)\s*[=\-–—:]\s*[\d\s.,']*", re.I
+)
+
+
+def _without_unit_price(text: str) -> str:
+    return _UNIT_PRICE_CLAUSE.sub(" ", text)
+
+
 def normalize_volume(value: Optional[float], *texts: Optional[str]) -> Optional[float]:
     """Volume in ml, from the model's number or by re-reading the raw text."""
     if value:
@@ -183,6 +200,7 @@ def normalize_volume(value: Optional[float], *texts: Optional[str]) -> Optional[
     for text in texts:
         if not text:
             continue
+        text = _without_unit_price(text)
         for pattern, factor in _VOLUME_PATTERNS:
             if match := pattern.search(text):
                 try:

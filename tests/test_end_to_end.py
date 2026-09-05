@@ -47,7 +47,7 @@ WINE = {
     "price": 54.59, "currency": "RON", "price_text": "54,59", "price_kind": "shelf",
     "original_price": None, "unit_price_text": "72,79 RON/L", "promo_text": None,
     "raw_tag_text": "COTNARI EUFORIA BUSUIOACA ROZE DO 0.75 L  54,59  72,79 RON/L",
-    "raw_label_text": "Euforia", "name_source": "both",
+    "raw_label_text": "Euforia", "ocr_price_index": 2, "name_source": "both",
     "pairing_confidence": "high", "pairing_note": None,
     "bottle_bbox": {"x0": 0.2, "y0": 0.1, "x1": 0.3, "y1": 0.6},
     "tag_bbox": {"x0": 0.2, "y0": 0.8, "x1": 0.3, "y1": 0.95},

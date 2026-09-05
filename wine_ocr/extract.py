@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import random
 import time
@@ -52,6 +53,7 @@ class Settings:
     tiling: str = "auto"  # auto | grid | whole
     workers: int = 4
     jpeg_quality: int = 90
+    cache_ttl: str = "5m"
 
 
 @dataclass
@@ -91,14 +93,24 @@ def build_client(max_retries: int = 5) -> anthropic.Anthropic:
     return anthropic.Anthropic(max_retries=max_retries)
 
 
-def _system_blocks(text: str) -> list[dict]:
+def _system_blocks(text: str, ttl: str = "5m") -> list[dict]:
     """System prompt with a cache breakpoint.
 
     Render order is tools -> system -> messages, so a breakpoint on the last
     system block caches the whole prefix. Every call in a run shares this exact
-    prefix, and the per-photo image and context sit after it in the user turn.
+    prefix byte for byte — the per-band crop and digest sit after it in the user
+    turn — so every call after the first reads the prompt at a tenth of the
+    input price instead of paying for it again.
+
+    The default 5-minute TTL is the right one for a bulk run: a write costs
+    1.25x and an hour-long TTL costs 2x, which only pays off when traffic has
+    gaps longer than five minutes. A run with several workers in flight never
+    does. Reach for ``1h`` when reading is spread out across a working day.
     """
-    return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}]
+    control: dict = {"type": "ephemeral"}
+    if ttl and ttl != "5m":
+        control["ttl"] = ttl
+    return [{"type": "text", "text": text, "cache_control": control}]
 
 
 def _parse_into(model_cls: type[BaseModel], text: str) -> BaseModel:
@@ -138,7 +150,7 @@ def _call(
             with client.messages.stream(
                 model=settings.model,
                 max_tokens=settings.max_tokens,
-                system=_system_blocks(system),
+                system=_system_blocks(system, settings.cache_ttl),
                 output_config=output_config(schema_model, settings.effort),
                 messages=[
                     {
@@ -360,7 +372,7 @@ def build_batch_item(
     params = {
         "model": settings.model,
         "max_tokens": settings.max_tokens,
-        "system": _system_blocks(EXTRACT_SYSTEM),
+        "system": _system_blocks(EXTRACT_SYSTEM, settings.cache_ttl),
         "output_config": output_config(BandExtraction, settings.effort),
         "messages": [
             {
@@ -460,3 +472,98 @@ def submit_and_wait(
                 out[entry.custom_id] = RegionResult(item.region, None, error=str(exc))
 
     return out
+
+
+# --------------------------------------------------------------------------
+# Local-first reading pass over the API
+# --------------------------------------------------------------------------
+
+
+def read_band(
+    client: anthropic.Anthropic,
+    settings: Settings,
+    job,
+    cache: ResponseCache,
+    usage: Usage,
+) -> Optional[BandExtraction]:
+    """Read one prepared band: its crop plus the OCR digest beside it.
+
+    This is the API counterpart of the agent reading pass — same crop, same
+    digest, same instructions — so a run through either produces answers that
+    ``collect`` treats identically.
+    """
+    from .prompts import BAND_SYSTEM, band_user_prompt
+
+    key = cache.key(
+        "band", PROMPT_VERSION, settings.model, settings.effort, job.job_id
+    )
+    if cached := cache.get(key):
+        try:
+            return BandExtraction.model_validate(cached)
+        except ValidationError:
+            pass  # cached under an older shape; re-read
+
+    with open(job.crop_path, "rb") as fh:
+        b64 = base64.standard_b64encode(fh.read()).decode("ascii")
+
+    prompt = band_user_prompt(
+        job.band_label, Path(job.photo).name, job.store,
+        job.photo_taken_at, job.ocr_digest, job.warnings,
+    )
+    extraction = _call(
+        client, settings, BAND_SYSTEM, prompt, b64, BandExtraction, usage
+    )
+    cache.put(key, extraction.model_dump())
+    return extraction  # type: ignore[return-value]
+
+
+def read_jobs(
+    client: anthropic.Anthropic,
+    settings: Settings,
+    jobs: list,
+    work_dir: Path,
+    cache: ResponseCache,
+    usage: Usage,
+    on_done=None,
+) -> tuple[int, list[dict]]:
+    """Read every job, writing each answer to disk as it lands.
+
+    Answers are written individually rather than batched at the end, so the
+    same interruption guarantee the agent pass has holds here: whatever
+    finished is on disk and will not be re-read.
+    """
+    from .collect import write_answer
+
+    errors: list[dict] = []
+    written = 0
+
+    def run(job):
+        try:
+            extraction = read_band(client, settings, job, cache, usage)
+            write_answer(work_dir, job.job_id, extraction.model_dump())
+            return job, None
+        except ExtractionError as exc:
+            return job, str(exc)
+        except Exception as exc:  # never let one bad band kill the run
+            return job, f"{type(exc).__name__}: {exc}"
+
+    # The first call alone warms the shared system-prompt cache; firing the
+    # whole fan-out at once would have every worker pay the full prefix.
+    ordered = list(jobs)
+    if not ordered:
+        return 0, errors
+    results = [run(ordered[0])]
+    if len(ordered) > 1 and settings.workers > 1:
+        with ThreadPoolExecutor(max_workers=settings.workers) as pool:
+            results.extend(pool.map(run, ordered[1:]))
+    elif len(ordered) > 1:
+        results.extend(run(j) for j in ordered[1:])
+
+    for job, error in results:
+        if error:
+            errors.append({"photo": job.photo, "stage": "read", "detail": error})
+        else:
+            written += 1
+        if on_done:
+            on_done(job, error)
+    return written, errors
