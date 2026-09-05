@@ -30,7 +30,8 @@ COLUMNS = [
     "original_price", "discount_pct", "grape_varieties", "region", "country",
     "abv_percent", "promo_text", "unit_price_text",
     "needs_review", "review_reasons", "pairing_confidence", "pairing_note",
-    "price_check", "unit_price_check", "name_source",
+    "brand_group", "brand_winery", "brand_label", "brand_match",
+    "price_check", "unit_price_check", "ocr_price", "ocr_price_check", "name_source",
     "photo", "photo_taken_at", "store_source", "store_read_from_photo",
     "shelf", "price_text", "raw_tag_text", "raw_label_text",
     "gps_lat", "gps_lon", "bottle_bbox", "tag_bbox",
@@ -38,7 +39,7 @@ COLUMNS = [
 ]
 
 NUMERIC = {"price", "price_per_litre", "original_price", "discount_pct",
-           "volume_ml", "abv_percent", "gps_lat", "gps_lon"}
+           "volume_ml", "abv_percent", "gps_lat", "gps_lon", "ocr_price"}
 
 UNMATCHED_COLUMNS = [
     "store", "photo", "shelf", "raw_text", "price", "currency", "reason", "tag_bbox"

@@ -2,57 +2,147 @@
 
 Point it at a folder of shop photos, get back a spreadsheet of wines and prices.
 
-It reads the wine name off the bottle label *and* the price tag, pairs each
-bottle with the tag that prices it, normalises the result, and writes a table
-with the store, the price, the price per litre and a provenance trail for every
-row.
+Local OCR reads the photo at full resolution and works out where the shelves
+are; a vision model then does the part that needs judgement — which bottle a
+price belongs to, and what that bottle is. The result is a table with the store,
+the price, the price per litre and a provenance trail for every row, written back
+out in the shape of your photo folders.
 
 ```
-wine-ocr extract data/photos --out out
+wine-ocr prep "Mystery shopping"      # local: read every photo, cut out the shelves
+wine-ocr briefs                       # the work list for the reading pass
+wine-ocr collect                      # local: assemble the table
 ```
 
 ```
-out/wines.xlsx          Wines · Needs review · Duplicates · Unmatched tags · Errors
-out/wines.csv           the same flat table
-out/unmatched_tags.csv  tags that were seen but could not be tied to a wine
-out/extractions.jsonl   raw model output, one record per photo
+out/Hypermarket - Kaufland/Hypermarket - Kaufland.csv   one CSV per photo folder
+out/index.csv                                           row counts and median price per folder
+out/wines.csv                                           the same rows, flat
+out/wines.xlsx                    Wines · Needs review · Duplicates · Unmatched tags · Errors
+out/work/                         crops, OCR digests, and one answer file per shelf
 ```
 
 ---
 
-## Why two passes
+## What the photographs will and will not give you
 
-The photos this was built against are 4284×5712 iPhone shots of a full chiller
-bay. The vision model downscales anything longer than 2576px on its long edge,
-which for these is a 2.2× reduction. Measured on a real tag rail:
+The design follows from measurements on the library itself — 4284x5712 phone
+shots of Romanian shop shelves — plus a survey in which ten agents each examined
+four photos from a different group of chains and magnified the tags by eye.
 
-| | prices | wine names on the tag |
-|---|---|---|
-| whole photo, downscaled to 2576px | readable | **illegible** |
-| shelf band cropped at native resolution | readable | readable |
+**Local OCR reads the prices, and it is free.** Apple's Vision framework runs
+offline on the native frame in about a second and a half. On the hand-read rail
+in `data/samples/annabella/` it returned all eleven prices at maximum
+confidence. It supports `ro-RO`, so Romanian diacritics survive.
 
-The wine name lives in ~10px of small print at the top of each tag. It does not
-survive the downscale, so one call per photo cannot work for shelf shots. The
-pipeline therefore:
+**The name is on the tag, not on the bottle** — in almost every chain. On
+Kaufland, Carrefour, Auchan, Penny, ATAC, Shop&Go and the cash-and-carry
+fixtures the article line is the *largest* text on the label and reads cleanly:
+`ZURZUR FETEASCA NEAGRA DS 3L`, `PURCARI CHARDONNAY S 0.75L`. Bottle labels are
+the weaker source: the brand word survives OCR but the varietal that
+distinguishes the SKU does not (`DEALONILE HOLDONE` for *Dealurile Moldovei*),
+and three different Jidvei wines side by side all come back as `JIDVEI`.
 
-1. **Locates the shelves** — one cheap call on the whole photo at 1568px returns
-   a band per shelf (bottle row + the tag rail beneath it), plus the store name
-   and currency, and marks shelves that hold no wine so they are never read again.
-2. **Reads each band at native resolution** — every band is cropped and, if it
-   still exceeds 2576px on either axis, split into overlapping tiles so that
-   *nothing sent to the model is ever downscaled*. A band keeps bottles and
-   their tags in one frame, which is what makes the pairing checkable.
+The exception is old-style paper tags, like Annabella's, whose article line is
+about ten pixels tall. Magnified 4x at native resolution it reads
+`TERA ROMANA VSTI 1 7L` — the information is not in the pixels, and no amount of
+cropping recovers it. There the bottle is the fallback. Which case a photo is in
+is something the model decides from the crop, not something assumed.
 
-Splitting is horizontal wherever possible, because a vertical cut can separate
-bottles from the tags that price them. When a band is too tall to avoid one
-(a close-up, or a single band covering most of the frame) the bottom row keeps
-the tag rail, and the tiles above it are told that no price in view belongs to
-their bottles — otherwise a tag clipped at the edge invites a confident, wrong
-pairing.
+**Reading name and price off the same tag avoids the pairing problem
+entirely.** One tag faces anywhere from one to twelve bottles, so matching tags
+to bottles by position is unreliable — Auchan measured 4 of 4 wrong on a clean
+shot. Two values printed on one piece of e-ink cannot be mispaired.
 
-`--tiling whole` skips all of this and makes one call per photo. It is ~6× cheaper
-and fine when the tags are large in frame (a single bottle, or a close-up of a
-rail); on a wide shelf shot it will get prices without reliable names.
+**Assume more than one number per tag.** Every chain surveyed prints at least
+two: a container deposit (`+ garantie SGR 0,50 Lei`), a per-litre figure, a
+multibuy tier, a loyalty price, a struck-through original. Kaufland's
+`Preț+garanție` total is a well-formed price exactly 0.50 above the real one.
+Several chains print no decimal separator at all — `88` large, a small raised
+`19` beside it.
+
+**Measured end to end.** Scored against the hand-transcribed rail with
+`wine-ocr verify`: **11/11 prices, 10/10 names, 11/11 volumes.** The names come
+off the tag — `MUSCAT OTTONEL ACADEMICIAN ALB DEMISEC 0.75L` where the ground
+truth only asserted "ACADEMICIAN".
+
+Put together: prices come from local OCR at native resolution, names come from
+the shelf tag, and the model is asked only for what neither can do — telling a
+tag's price from its four decoys, and saying which wine the tag is for.
+
+## How a photo becomes rows
+
+**Prep is local and free.** OCR runs at native resolution, tiled at 1200px
+because Vision downscales its own input too. The tag rails then fall out of the
+geometry: a rail is a horizontal run of price-shaped text at a common height, so
+clustering the prices finds the shelves without a single model call. Each rail
+plus the bottles standing above it becomes a *band*, and each band is written
+out as a JPEG crop next to a text digest of what OCR read there.
+
+Rail detection has to survive real shop fixtures, so:
+
+| | |
+|---|---|
+| Shelves slope in an angled shot | prices are chained left to right, with the tolerance growing over distance, so the chain follows the slope instead of snapping |
+| Carrefour, Kaufland and Mega Image use electronic labels | `88` with a small raised `19` reaches OCR as `8819`; a run-together number on a rail is read as lei-and-bani, and the row is flagged so the model checks it |
+| A snack rack stands beside the wine bay | a band's top edge is the nearest rail *that overlaps it horizontally*, so an unrelated fixture cannot crop the bottles out |
+| Lidl prints `1 L = 53,32 Lei` under the price | a number markedly shorter than the rail's own digits is small print, not a price |
+| `1827` and `1958` are wines, not prices | a run of inferred prices must stretch across the frame like a rail; two of them on neighbouring bottles is a coincidence |
+| A shelf's prices are unreadable | any stretch of the photo no rail claimed is still cropped and read, so a shelf is never dropped silently |
+
+**Reading is the only part that needs a model.** One agent per photo opens each
+of its band crops and returns one record per price. It is given the OCR digest
+alongside the image, which is what lets it work from a downscaled crop without
+losing the prices: the digest carries the native-resolution reading the image no
+longer shows. The instruction is explicit that the price comes from the digest
+and the name comes from the bottle.
+
+Because the work list is a directory of files, the run is resumable by
+construction. Every answer is a file; `wine-ocr status` counts what is left and
+`wine-ocr briefs` hands back only the photos that still need reading, so an
+overnight run that is interrupted picks up exactly where it stopped.
+
+**Collect is local and free.** Answers are validated, cross-checked, deduplicated
+and written out. A malformed answer is not repaired or discarded — the job simply
+stays pending and comes back on the next pass.
+
+## Running without an API key
+
+The reading pass is a set of instruction files and image paths, so it does not
+have to go through the API at all. `wine-ocr briefs` prints a work list that a
+Claude Code agent run can execute directly:
+
+```bash
+wine-ocr prep "Mystery shopping" --work out/work
+wine-ocr briefs --work out/work > work.json      # one entry per photo still to read
+# hand work.json to tools/read_shelves.workflow.js
+wine-ocr status --work out/work                  # how much is left
+wine-ocr collect --work out/work --out out --root "Mystery shopping"
+```
+
+`wine-ocr extract` still drives the Anthropic API directly if you would rather
+have a key do the work; everything else is identical.
+
+### Running it overnight
+
+The reading pass is the slow half, and it is chunked by design. Ask for a batch
+of photos, read them, repeat — each round only ever sees what is still
+unanswered, so nothing is done twice and stopping is free:
+
+```bash
+wine-ocr briefs --work out/work --limit 40      # the next 40 unanswered photos
+# ... read them ...
+wine-ocr status --work out/work                 # 312 of 443 photos still to go
+```
+
+Answers land in `out/work/answers/` as they are produced. A run killed halfway
+leaves every answer it had already written, and `wine-ocr collect` will build a
+table from whatever is there — so there is a usable spreadsheet at every point,
+not only at the end.
+
+Ordering is smallest-first: photos with fewest shelves go first, so an
+interrupted run has finished whole photos rather than leaving many half-read.
+
 
 ## Quickstart — run it on your own machine
 
@@ -148,39 +238,47 @@ names (`anabela`, `annabella-rm-valcea`) onto one canonical store.
 
 ## Usage
 
+The local-first pipeline — no API key, three commands:
+
 ```bash
-# Create folders, config and .env
-wine-ocr init "Annabella, Kaufland"
+# Read every photo locally: OCR, shelf detection, crops, briefs
+wine-ocr prep "Mystery shopping" --work out/work
 
-# See what a run would cost before spending anything
-wine-ocr estimate data/photos
+# Show what local OCR saw on one photo, and the shelves it derived
+wine-ocr ocr "Mystery shopping/Hypermarket - Kaufland/IMG_3448.HEIC"
 
-# See how a photo will be cut up — no API calls
-wine-ocr plan data/samples/annabella/IMG_5755.HEIC --out /tmp/tiles
+# The work list for the reading pass — only photos not yet answered
+wine-ocr briefs --work out/work
+wine-ocr briefs --work out/work --store Kaufland --limit 20
 
-# Normal run
-wine-ocr extract data/photos --out out
+# How much is left
+wine-ocr status --work out/work
 
-# One store, cheap mode, write crops of anything doubtful
-wine-ocr extract data/photos/annabella --store Annabella --tiling whole --crops
-
-# Big library: half price, runs in the background for minutes to hours
-wine-ocr extract data/photos --batch
-
-# Add a new shopping trip to an existing table
-wine-ocr extract data/photos/new-trip --append
-
-# Check flagged rows against the crops they came from (opens in a browser)
-wine-ocr review out/wines.csv --photos data/photos
-
-# Score an extraction against hand-read ground truth
-wine-ocr verify out/wines.csv
+# Build the table from whatever has been answered
+wine-ocr collect --work out/work --out out --root "Mystery shopping"
 ```
 
-`init`, `estimate`, `plan`, `review` and `verify` make no API calls at all.
+Driving it through the Anthropic API instead:
 
-Useful flags: `--effort low|medium|high|xhigh|max` (default `high`),
-`--model`, `--workers`, `--limit N`, `--no-cache`.
+```bash
+wine-ocr init "Annabella, Kaufland"     # folders, config and .env
+wine-ocr estimate data/photos           # what a run would cost
+wine-ocr extract data/photos --out out  # do it
+wine-ocr extract data/photos --batch    # half price, slower
+```
+
+Checking the result, either way:
+
+```bash
+wine-ocr review out/wines.csv --photos "Mystery shopping"   # crops beside values
+wine-ocr verify out/wines.csv                               # score vs ground truth
+```
+
+Everything except `extract` makes no API calls at all.
+
+Useful flags: `--max-tile` (local OCR resolution), `--store`, `--limit N`,
+`--no-cache`; and for `extract`, `--effort low|medium|high|xhigh|max`,
+`--model`, `--workers`.
 
 ## What you get per row
 
@@ -238,8 +336,20 @@ Volumes correct           ?/11
 Rows outside ground truth n  (not scored)
 ```
 
-**These numbers are unmeasured so far** — the scorer is tested against synthetic
-extractions, but nothing has been scored against real model output yet.
+Measured on 2026-08-17, running the local-first pipeline over the four sample
+photos:
+
+```
+Prices found              11/11 (100%)
+Names correct             10/10 (100%) of tags found
+Volumes correct           11/11 (100%)
+Rows outside ground truth 44  (not scored)
+```
+
+The names are the part worth looking at, because they are what a price table is
+useless without: `MUSCAT OTTONEL ACADEMICIAN ALB DEMISEC 0.75L`, `DOMENIILE
+SAMBURESTI FETEASCA NEAGRA 0.75 L`, `CASTEL HUNIADE VIN MERLOT + PINOT NOIR`.
+All of them came off the tag rather than the bottle.
 
 Ground truth covers one rail, so scoring is recall over that rail; rows from
 other shelves are listed but never counted against you. Matching is on price —
@@ -252,19 +362,20 @@ change.
 
 ## Cost
 
-Measured on the four sample photos (upper bound; ignores caching):
+The local-first pipeline replaces the old two-vision-pass design, which spent
+about seven model calls per photo. Prep now does the shelf-finding for nothing:
 
-| Mode | Calls / photo | Cost / photo | With `--batch` |
-|---|---|---|---|
-| `--tiling auto` (default) | ~7 | ~$0.34 | ~$0.17 |
-| `--tiling whole` | 1 | ~$0.05 | ~$0.03 |
+| | Model calls | Time |
+|---|---|---|
+| `wine-ocr prep` on 448 photos | 0 | ~20 min of local CPU |
+| Reading those photos | 1 turn per photo | depends on concurrency |
+| `wine-ocr collect` | 0 | seconds |
 
-Three things bring the real figure down: the layout pass skips shelves with no
-wine, the system prompt is cached across every call in a run, and every response
-is cached on disk by image hash. Re-running after changing output columns or
-review rules costs nothing.
+Local OCR is cached on disk by image hash and prompt version, so re-running prep
+after a geometry change re-reads nothing. Re-running `collect` after changing
+output columns or review rules is free by construction — it never calls anything.
 
-Run `wine-ocr estimate` on your own photos for a real number.
+`wine-ocr estimate` still gives a dollar figure for the API path.
 
 ## Sample photos
 
@@ -280,17 +391,26 @@ pip install -e ".[dev]"
 pytest
 ```
 
-102 tests, no API key required. The end-to-end test drives the whole pipeline
-against a stubbed client using a real sample photo, so the only thing untested
-without a key is the model's answer itself. `test_tiles_are_never_downscaled`
-and `test_images_reach_the_model_at_native_resolution` are regression guards on
-the resolution finding above.
+168 tests, no API key required, and none of them are stubs where it matters:
+`tests/test_prep.py` runs the real Vision helper over the real sample photos, so
+the geometry is measured rather than mocked. `test_the_ground_truth_rail_is_found_in_full`
+is the regression guard on the finding this design rests on — that local OCR
+returns every price on a hand-transcribed rail.
+
+The Swift helper is compiled on first use, so `swiftc` (Xcode command line
+tools) is the only extra requirement. macOS only: Vision has no equivalent
+elsewhere, and the API path in `extract.py` is the fallback on other platforms.
 
 ```
 wine_ocr/
-├── cli.py         extract / estimate / plan commands
-├── extract.py     the two passes, prompt caching, concurrency, Batch API
-├── images.py      HEIC, EXIF, and the band/tile geometry
+├── cli.py         prep / briefs / status / collect / ocr, and the API commands
+├── vision.py      local OCR through Apple Vision, cached by image hash
+├── layout.py      rails, bands, tag boxes — the shelf geometry, no model calls
+├── prep.py        crops, digests, per-photo briefs, the resumable manifest
+├── collect.py     answers back into rows, refereed against the OCR prices
+├── mirror.py      one CSV per source folder, plus the index
+├── extract.py     the API path: two vision passes, prompt caching, Batch API
+├── images.py      HEIC, EXIF, and the crop geometry
 ├── models.py      Pydantic schemas — the field descriptions are the prompt
 ├── prompts.py     system prompts (bump PROMPT_VERSION to invalidate the cache)
 ├── normalize.py   prices, volumes, vintages, the cross-checks
@@ -299,16 +419,54 @@ wine_ocr/
 ├── schema.py      Pydantic → structured-outputs JSON Schema
 ├── review.py      the HTML review sheet
 ├── verify.py      ground-truth scoring
-└── cache.py       on-disk response cache
+└── cache.py       on-disk cache, shared by the OCR and API paths
+
+tools/
+├── visionocr.swift          the Vision helper
+└── read_shelves.workflow.js the reading pass, one agent per photo
 ```
 
 ## Known limits
 
-- **Not yet run against the live API.** Every offline stage is tested, but the
-  prompts have not been tuned against real model output. Expect a first pass to
-  need prompt adjustment — `PROMPT_VERSION` exists for exactly that loop.
-- Bottle-to-tag pairing is hardest on crowded shelves where bottles are wider
-  than their tags; those rows should come back `medium` or `low` confidence.
+These come from a survey of the photo library itself: ten agents each examined
+four photos from a different group of Romanian chains, magnified tags by eye,
+and reported where the design breaks. Most of what follows is their findings.
+
+- **Every chain prints more than one number per tag.** A container deposit
+  (`+ garantie SGR 0,50 Lei`), a per-litre figure, multibuy tiers, a loyalty
+  price, a struck-through original. Kaufland's `Preț+garanție` total is the
+  nastiest: a well-formed price exactly 0.50 above the real one. Local OCR
+  filters the obvious decoys and hands the rest to the model with their wording;
+  a tag whose largest number is a three-for price can still be got wrong.
+- **Several chains print the price with no decimal separator** — `88` with a
+  small raised `19`. The separator is inferred two digits from the end, which is
+  right for Romanian retail but is a reading nothing has independently verified.
+  Those rows say so in the digest and are worth spot-checking.
+- **A tag can face a dozen bottles.** One tag is one row, so a shelf of twelve
+  identical facings yields one price, not twelve — but where several SKUs share
+  a facing block, which bottle a tag refers to is genuinely ambiguous.
+- **Lidl hangs its rail above the products.** The pipeline assumes tags price the
+  bottles above them and tells the model to check the tag's own text for the
+  exception, but a Lidl shelf read purely on geometry will be off by one row.
+- **OCR confidence is not accuracy.** The engine reports 1.0 on readings that are
+  plainly wrong when magnified, and 0.3 on text that is perfectly correct. It is
+  used as a weak hint only; nothing is filtered on it alone.
+- **The raised bani digits are the real risk, not the missing separator.** The
+  reading pass found the large lei figure almost always right and the small
+  raised pair often wrong in a consistent way — 9 read as 0 or 3, 4 read as 1:
+  `37 49` came back as `37.40`, `28 99` as `28.90`, `44 99` as `44.00`. The
+  `DECIMAL POINT INFERRED` warning flags the right tags for the wrong reason.
+- **A tag's printed left border becomes a leading 1.** `34,49` reads as
+  `134.49`, `30,49` as `130.40`, `56,49` as `156.49`. On a rail whose other
+  tags are two-digit, a price in the 100-199 band is worth re-reading.
+- **Campaign tags print three prices in exact ratio.** Profi's "MULTI PROFIT
+  APP" 2+1 tags carry the campaign per-bottle price, the three-bottle total at
+  twice the shelf price, and the shelf price itself; La Cocos and Supeco print
+  similar tiers. Collection flags any price with a 2x or one-third sibling on
+  the same rail, but the pick itself still needs the image.
+- **Panoramas produce fabricated numbers.** Stitch ghosting on the four Kaufland
+  panoramas turned a 15.19 tag into `155,49`. They should be shot again as
+  ordinary frames.
 - Vintages are frequently absent from Romanian shelf tags and unreadable on
   angled labels, so `vintage` will often be null.
 - Enrichment from external sources (grape, region, ratings for wines whose label

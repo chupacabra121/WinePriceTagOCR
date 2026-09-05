@@ -131,3 +131,37 @@ def test_review_reasons():
     assert "name too generic" in reasons
 
     assert "implausible price per litre" in review_reasons(dict(good, price_per_litre=0.4))
+
+
+# --------------------------------------------------------------------------
+# Decoys on the tag that look like the value being read
+# --------------------------------------------------------------------------
+
+
+def test_a_per_litre_reference_is_not_read_as_the_bottle_volume():
+    """Lidl prints '1 L = 53,32 Lei' on every tag; the bottle is still 750ml."""
+    tag = "COTNARI EUFORIA 0.75 L  54,59  1 L = 72,79 Lei"
+    assert normalize_volume(None, tag) == 750.0
+
+
+def test_a_kaufland_litre_reference_is_not_read_as_the_volume():
+    assert normalize_volume(None, "El Carisma Vin alb (1 litru = 24.52)") is None
+
+
+def test_a_real_litre_bottle_is_still_read():
+    assert normalize_volume(None, "PELIN CARPATIN 1 L") == 1000.0
+
+
+def test_a_three_litre_box_is_still_read():
+    assert normalize_volume(None, "ZURZUR FETEASCA NEAGRA DS 3L") == 3000.0
+
+
+def test_an_electronic_label_price_verifies_against_its_run_together_text():
+    """Carrefour prints '88' then a small '19' and no separator at all."""
+    assert check_price(88.19, "8819") == "ok_no_separator"
+
+
+def test_a_genuine_decimal_misread_is_still_caught():
+    """A separator is present, so the run-together excuse does not apply."""
+    assert check_price(88.19, "8.819") == "mismatch_x100"
+    assert check_price(88.19, "38,19") == "mismatch"

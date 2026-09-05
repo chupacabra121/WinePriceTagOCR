@@ -188,6 +188,13 @@ class WineEntry(BaseModel):
         description="Verbatim transcription of the readable text on the bottle label."
     )
 
+    ocr_price_index: Optional[int] = Field(
+        description=(
+            "When the caller listed prices that local OCR read off the tag rail, "
+            "the 1-based position in that list of the price this record uses. "
+            "Null if the price came from somewhere else, or if no list was given."
+        )
+    )
     name_source: NameSource = Field(description="Where the name was read from.")
     pairing_confidence: Confidence = Field(
         description=(

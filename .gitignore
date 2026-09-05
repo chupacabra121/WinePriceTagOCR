@@ -5,6 +5,11 @@
 data/photos/*
 !data/photos/.gitkeep
 
+# Shoot folders kept alongside the repo. ~2 GB of HEIC that git would store
+# forever, one full copy per re-shoot.
+Mystery shopping/
+mystery shopping/
+
 # Outputs and caches
 out/*
 !out/.gitkeep
@@ -14,6 +19,9 @@ out/*
 
 # Local store config (may contain real addresses)
 config/stores.yaml
+
+# Compiled on first use; architecture-specific
+tools/visionocr
 
 # Python
 __pycache__/
